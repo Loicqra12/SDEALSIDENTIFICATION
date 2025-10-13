@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../models/classification_model.dart';
-import '../services/api_service.dart';
+import '../services/api_service_old.dart';
 
 // ===== EVENTS =====
 abstract class ClassificationEvent extends Equatable {

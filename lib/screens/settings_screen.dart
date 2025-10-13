@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/local_storage_service.dart';
 import '../services/points_service.dart';
+import '../services/sync_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,11 +15,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic> _stats = {};
   Map<String, dynamic> _progressInfo = {};
   bool _isLoading = true;
+  String _userName = 'Recenseur';
+  String _userEmail = '';
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    // TODO: Récupérer depuis SharedPreferences ou AuthCubit
+    // Pour l'instant, valeur par défaut
+    setState(() {
+      _userName = 'Recenseur';
+      _userEmail = 'recenseur@soutralideals.com';
+    });
   }
 
   Future<void> _loadData() async {
@@ -143,25 +156,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
             CircleAvatar(
               radius: 40,
               backgroundColor: const Color(0xFF1CBF3F).withOpacity(0.1),
-              child: const Icon(
-                Icons.person,
-                size: 40,
-                color: Color(0xFF1CBF3F),
+              child: Text(
+                _userName.isNotEmpty ? _userName[0].toUpperCase() : 'R',
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1CBF3F),
+                ),
               ),
             ),
             const SizedBox(height: 16),
             Text(
-              'Recenseur',
+              _userName,
               style: Theme.of(
                 context,
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
+            if (_userEmail.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                _userEmail,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             Text(
               'Niveau ${_progressInfo['level'] ?? 1}',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                 color: const Color(0xFF1CBF3F),
                 fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => _showComingSoon('Édition du profil'),
+              icon: const Icon(Icons.edit),
+              label: const Text('Modifier le profil'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1CBF3F),
               ),
             ),
           ],
@@ -350,7 +384,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.sync,
             title: 'Synchroniser maintenant',
             subtitle: 'Envoyer les données en attente',
-            onTap: () => _showComingSoon('Synchronisation'),
+            onTap: _performSync,
           ),
           const Divider(height: 1),
           _buildActionTile(
@@ -399,6 +433,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
       onTap: onTap,
     );
+  }
+
+  Future<void> _performSync() async {
+    // Afficher dialog de chargement
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Synchronisation en cours...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Appeler la synchronisation (retourne void)
+      await SyncService.forceSync();
+      
+      if (mounted) {
+        context.pop(); // Fermer dialog chargement
+
+        // Récupérer les stats pour voir combien ont été synchronisés
+        final stats = await LocalStorageService.getLocalStats();
+        final pendingCount = stats['pendingSync'] ?? 0;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              pendingCount == 0
+                  ? '✅ Synchronisation terminée avec succès'
+                  : '⚠️ $pendingCount recensement(s) encore en attente',
+            ),
+            backgroundColor: pendingCount == 0 ? Colors.green : Colors.orange,
+          ),
+        );
+        
+        // Recharger les données
+        _loadData();
+      }
+    } catch (e) {
+      if (mounted) {
+        context.pop(); // Fermer dialog chargement
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Erreur de synchronisation: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _showComingSoon(String feature) {

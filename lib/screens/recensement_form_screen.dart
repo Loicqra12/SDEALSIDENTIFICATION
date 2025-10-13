@@ -11,8 +11,6 @@ import '../services/local_storage_service.dart';
 import '../services/points_service.dart';
 import '../services/sync_service.dart';
 import '../services/api_service.dart';
-// import '../services/maps_service.dart'; // Utilisé dans LocationPickerWidget
-import '../widgets/location_picker_widget.dart';
 import '../blocs/classification_bloc.dart';
 
 class RecensementFormScreen extends StatefulWidget {
@@ -49,6 +47,10 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
   // Sélections
   String? _selectedCategorie;
   String? _selectedService;
+
+  // Utilisateur connecté
+  String? _currentUserId;
+  String? _currentUserName;
 
   // Prix
   final TextEditingController _prixController = TextEditingController();
@@ -110,6 +112,7 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
   @override
   void initState() {
     super.initState();
+    _loadCurrentUser();
     _getCurrentLocation();
     // Charger les catégories via le BLoC
     print('🚀 Initialisation du formulaire pour le type: ${widget.type}');
@@ -117,6 +120,16 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
     context.read<ClassificationBloc>().add(
       LoadCategoriesByGroup(groupId: _fixedGroupeNom),
     );
+  }
+
+  Future<void> _loadCurrentUser() async {
+    // TODO: Récupérer depuis AuthCubit ou SharedPreferences
+    // Pour l'instant, valeurs par défaut
+    setState(() {
+      // TODO: Récupérer l'ID réel de l'utilisateur connecté depuis AuthCubit
+      _currentUserId = '000000000000000000000000'; // ObjectId null valide
+      _currentUserName = 'Recenseur Anonyme';
+    });
   }
 
   List<Step> _buildSteps(ClassificationState state) {
@@ -267,22 +280,8 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
     }
   }
 
-  Future<void> _openLocationPicker() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder:
-            (context) => LocationPickerWidget(
-              initialPosition: _currentPosition,
-              onLocationSelected: (position) {
-                setState(() {
-                  _currentPosition = position;
-                });
-              },
-            ),
-      ),
-    );
-  }
+  // Méthode supprimée - on utilise maintenant le GPS automatique
+  // au lieu d'une carte interactive compliquée
 
   void _nextStep() {
     int maxSteps =
@@ -305,7 +304,7 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
   }
 
   void _submitForm() async {
-    print('🔄 Début de la soumission du formulaire');
+    print('🔄 Début de la soumission avec API v2 simplifiée');
     print(
       '📋 Données: type=${widget.type}, categorie=$_selectedCategorie, service=$_selectedService',
     );
@@ -313,135 +312,66 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
 
-      // Créer le modèle de recensement
-      final recensement = RecensementModel(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        type: widget.type,
-        nom: _nomController.text,
-        telephone: _telephoneController.text,
-        email: _emailController.text.isNotEmpty ? _emailController.text : null,
-        // description: _notesController.text.isNotEmpty ? _notesController.text : null,
-        latitude: _currentPosition?.latitude,
-        longitude: _currentPosition?.longitude,
-        adresse:
-            _adresseController.text.isNotEmpty ? _adresseController.text : null,
-        ville: _villeController.text.isNotEmpty ? _villeController.text : null,
-        quartier:
-            _quartierController.text.isNotEmpty
-                ? _quartierController.text
-                : null,
-        groupe: _fixedGroupeNom,
-        categorie: _selectedCategorie ?? '',
-        service: _selectedService ?? '',
-        notes: _notesController.text.isNotEmpty ? _notesController.text : null,
-        // Champs spécifiques au vendeur
-        shopName:
-            widget.type == 'vendeur' && _shopNameController.text.isNotEmpty
-                ? _shopNameController.text
-                : null,
-        shopDescription:
-            widget.type == 'vendeur' &&
-                    _shopDescriptionController.text.isNotEmpty
-                ? _shopDescriptionController.text
-                : null,
-        productCategories:
-            widget.type == 'vendeur' && _selectedProductCategories.isNotEmpty
-                ? _selectedProductCategories
-                : null,
-        productTypes:
-            widget.type == 'vendeur' && _selectedProductTypes.isNotEmpty
-                ? _selectedProductTypes
-                : null,
-        recenseurId:
-            'current_user_id', // À remplacer par l'ID du recenseur connecté
-        recenseurNom: 'Recenseur Actuel', // À remplacer par le nom du recenseur
-        dateRecensement: DateTime.now(),
-        photoPath: _photoFile?.path,
+      // Préparer les données pour l'API v2 simplifiée
+      final data = {
+        'type': widget.type,
+        'nom': _nomController.text,
+        'telephone': _telephoneController.text,
+        'email': _emailController.text.isNotEmpty ? _emailController.text : null,
+        'service': _getServiceName(), // Nom du service, pas l'ID
+        'categorie': _getCategoryName(), // Nom de la catégorie
+        'photoPath': _photoFile?.path,
+        'latitude': _currentPosition?.latitude,
+        'longitude': _currentPosition?.longitude,
+        'adresse': _buildFullAddress(),
+        'ville': _villeController.text.isNotEmpty
+            ? _villeController.text
+            : 'Abidjan',
+        'notes': _notesController.text.isNotEmpty ? _notesController.text : null,
+        'genre': 'Non spécifié', // Requis par backend
+        
+        // Champs vendeur
+        if (widget.type == 'vendeur') ...{
+          'shopName': _shopNameController.text,
+          'shopDescription': _shopDescriptionController.text,
+          'businessType': 'Particulier',
+        },
+      };
+
+      print('📤 Envoi des données vers API v2...');
+
+      // Appeler l'API simplifiée
+      final result = await ApiService.submitRecensementSimple(
+        data: data,
+        recenseurId: _currentUserId ?? 'unknown',
+        recenseurNom: _currentUserName ?? 'Recenseur',
       );
 
-      // Sauvegarder en local
-      print('💾 Sauvegarde locale du recensement...');
-      await LocalStorageService.saveRecensement(recensement);
-      print('✅ Recensement sauvegardé localement');
+      if (result['success'] == true) {
+        print('✅ Recensement soumis avec succès');
 
-      // Tenter de soumettre au backend
-      final apiResult = await ApiService.submitRecensement(
-        recensement.toJson(),
-      );
+        // Calculer les points
+        final points = PointsService.calculateRecensementPoints(
+          hasPhoto: _photoFile != null,
+          hasLocation: _currentPosition != null,
+          isComplete: true,
+          isFirstRecensement: false,
+          streakCount: 0,
+        );
 
-      if (apiResult['success'] == true) {
-        // Succès de l'API
-        print('Recensement soumis avec succès au backend');
+        // Ajouter les points
+        await PointsService.addPoints(
+          _currentUserId ?? 'unknown',
+          points,
+          'Recensement ${_getTypeTitle()}',
+        );
+
+        // Afficher succès
+        _showSuccessDialog(points);
       } else {
-        // Échec de l'API, garder en local pour synchronisation ultérieure
-        print('Échec de la soumission au backend, gardé en local');
+        print('❌ Erreur soumission: ${result['error']}');
+        _showErrorDialog(result['error']?.toString() ?? 'Erreur inconnue');
       }
-
-      // Calculer les points
-      final points = PointsService.calculateRecensementPoints(
-        hasPhoto: _photoFile != null,
-        hasLocation: _currentPosition != null,
-        isComplete:
-            _nomController.text.isNotEmpty &&
-            _telephoneController.text.isNotEmpty &&
-            _selectedCategorie != null &&
-            _selectedService != null,
-        isFirstRecensement:
-            false, // TODO: Vérifier si c'est le premier recensement
-        streakCount: 0, // TODO: Calculer la série de recensements
-      );
-
-      // Ajouter les points
-      await PointsService.addPoints(
-        'current_user_id', // À remplacer par l'ID du recenseur connecté
-        points,
-        'Recensement ${_getTypeTitle()}',
-      );
-
-      // Tenter la synchronisation
-      await SyncService.forceSync();
-
-      // Afficher succès avec les points gagnés
-      showDialog(
-        context: context,
-        builder:
-            (context) => AlertDialog(
-              title: const Text('Recensement réussi !'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Les informations ont été enregistrées avec succès.',
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green[200]!),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.stars, color: Colors.amber),
-                        const SizedBox(width: 8),
-                        Text('+$points points gagnés !'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    context.go('/dashboard');
-                  },
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-      );
     }
   }
 
@@ -460,6 +390,167 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
 
   String _getGroupeName() {
     return _fixedGroupeNom;
+  }
+
+  // Méthodes helpers pour l'API v2
+  String _getServiceName() {
+    if (_selectedService == null) return '';
+    return _services
+        .firstWhere(
+          (s) => s.id == _selectedService,
+          orElse: () => ServiceModel(
+            id: '',
+            nom: '',
+            categorieId: '',
+            imagePath: '',
+            prixMoyen: '',
+          ),
+        )
+        .nom;
+  }
+
+  String _getCategoryName() {
+    if (_selectedCategorie == null) return '';
+    return _categories
+        .firstWhere(
+          (c) => c.id == _selectedCategorie,
+          orElse: () => CategorieModel(
+            id: '',
+            nom: '',
+            groupeId: '',
+            imagePath: '',
+          ),
+        )
+        .nom;
+  }
+
+  String _buildFullAddress() {
+    final parts = <String>[];
+    if (_quartierController.text.isNotEmpty) {
+      parts.add(_quartierController.text);
+    }
+    if (_adresseController.text.isNotEmpty) {
+      parts.add(_adresseController.text);
+    }
+    if (_villeController.text.isNotEmpty) {
+      parts.add(_villeController.text);
+    }
+    return parts.isEmpty ? 'Non spécifié' : parts.join(', ');
+  }
+
+  void _showSuccessDialog(int points) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+              child: const Text(
+                'Recensement réussi !',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Les informations ont été enregistrées avec succès.',
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green[200]!),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.stars, color: Colors.amber, size: 24),
+                  const SizedBox(width: 8),
+                  Text(
+                    '+$points points gagnés !',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Le recensement sera validé par un administrateur.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              context.go('/dashboard');
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorDialog(String error) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.error, color: Colors.red, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+              child: const Text(
+                'Erreur',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Une erreur est survenue lors de la soumission :',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              style: const TextStyle(color: Colors.red),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Vérifiez votre connexion internet et réessayez.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -714,15 +805,46 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
         ),
         const SizedBox(height: 16),
 
-        // Bouton pour ouvrir Google Maps
-        ElevatedButton.icon(
-          onPressed: _openLocationPicker,
-          icon: const Icon(Icons.map),
-          label: const Text('Sélectionner sur la carte'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1CBF3F),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        // Position GPS automatique (lecture seule)
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.green[50],
+            border: Border.all(color: const Color(0xFF1CBF3F)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.location_on, color: Color(0xFF1CBF3F)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Position GPS',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _currentPosition != null
+                          ? 'Lat: ${_currentPosition!.latitude.toStringAsFixed(6)}, Long: ${_currentPosition!.longitude.toStringAsFixed(6)}'
+                          : 'Position GPS récupérée automatiquement',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, color: Color(0xFF1CBF3F)),
+                onPressed: _getCurrentLocation,
+                tooltip: 'Actualiser position',
+              ),
+            ],
           ),
         ),
       ],
@@ -930,11 +1052,15 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
           ),
           value: _selectedCategorie,
           hint: const Text('Sélectionner une catégorie'),
+          isExpanded: true, // Fix overflow
           items:
               _categories.map((categorie) {
                 return DropdownMenuItem<String>(
                   value: categorie.id,
-                  child: Text(categorie.nom),
+                  child: Text(
+                    categorie.nom,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 );
               }).toList(),
           onChanged: (value) {
@@ -988,11 +1114,15 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
                   ),
                   value: _selectedService,
                   hint: const Text('Sélectionner un service'),
+                  isExpanded: true, // Fix overflow
                   items:
                       serviceState.services.map((service) {
                         return DropdownMenuItem<String>(
                           value: service.id,
-                          child: Text(service.nom),
+                          child: Text(
+                            service.nom,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         );
                       }).toList(),
                   onChanged: (value) {

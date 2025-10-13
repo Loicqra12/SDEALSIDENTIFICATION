@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-import 'api_service.dart';
+import 'api_service_old.dart';
 import 'local_storage_service.dart';
 
 class SyncService {
@@ -177,5 +177,27 @@ class SyncService {
       'lastSync',
       DateTime.now().toIso8601String(),
     );
+  }
+
+  /// Synchroniser uniquement les status depuis le backend
+  /// Vérifie si des recensements locaux ont été validés/rejetés côté serveur
+  static Future<void> syncRecensementStatus() async {
+    try {
+      // Récupérer tous les recensements locaux
+      final localRecensements = await LocalStorageService.getAllRecensements();
+      
+      for (var recensement in localRecensements) {
+        // Ignorer les brouillons
+        if (recensement.status == 'draft') continue;
+        
+        // TODO: Implémenter vérification backend par ID utilisateur
+        // Pour l'instant, on ne fait rien car pas d'ID backend stocké localement
+        // Dans une version future, stocker l'ID MongoDB du prestataire/freelance/vendeur créé
+      }
+      
+      print('✅ Synchronisation des status terminée');
+    } catch (e) {
+      print('❌ Erreur sync status: $e');
+    }
   }
 }

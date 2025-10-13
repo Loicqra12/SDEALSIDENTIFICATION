@@ -1,8 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../services/local_storage_service.dart';
 
-class TypeSelectionScreen extends StatelessWidget {
+class TypeSelectionScreen extends StatefulWidget {
   const TypeSelectionScreen({super.key});
+
+  @override
+  State<TypeSelectionScreen> createState() => _TypeSelectionScreenState();
+}
+
+class _TypeSelectionScreenState extends State<TypeSelectionScreen> {
+  Map<String, int> _counters = {};
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCounters();
+  }
+
+  Future<void> _loadCounters() async {
+    try {
+      final recensements = await LocalStorageService.getAllRecensements();
+      
+      final prestataireCount = recensements.where((r) => r.type == 'prestataire').length;
+      final freelanceCount = recensements.where((r) => r.type == 'freelance').length;
+      final vendeurCount = recensements.where((r) => r.type == 'vendeur').length;
+      
+      setState(() {
+        _counters = {
+          'prestataire': prestataireCount,
+          'freelance': freelanceCount,
+          'vendeur': vendeurCount,
+        };
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Erreur chargement compteurs: $e');
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +84,7 @@ class TypeSelectionScreen extends StatelessWidget {
               subtitle: 'Artisans, réparateurs, services à domicile',
               icon: Icons.build,
               color: Colors.blue,
+              count: _counters['prestataire'] ?? 0,
               onTap: () => context.push('/recensement-form?type=prestataire'),
             ),
 
@@ -59,6 +97,7 @@ class TypeSelectionScreen extends StatelessWidget {
               subtitle: 'Travailleurs indépendants, consultants',
               icon: Icons.work,
               color: Colors.orange,
+              count: _counters['freelance'] ?? 0,
               onTap: () => context.push('/recensement-form?type=freelance'),
             ),
 
@@ -71,6 +110,7 @@ class TypeSelectionScreen extends StatelessWidget {
               subtitle: 'Commerçants, boutiques, e-commerce',
               icon: Icons.store,
               color: Colors.purple,
+              count: _counters['vendeur'] ?? 0,
               onTap: () => context.push('/recensement-form?type=vendeur'),
             ),
           ],
@@ -86,6 +126,7 @@ class TypeSelectionScreen extends StatelessWidget {
     required IconData icon,
     required Color color,
     required VoidCallback onTap,
+    int count = 0,
   }) {
     return Card(
       elevation: 4,
@@ -123,6 +164,27 @@ class TypeSelectionScreen extends StatelessWidget {
                       subtitle,
                       style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                     ),
+                    if (count > 0) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '$count recensé${count > 1 ? 's' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: color,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

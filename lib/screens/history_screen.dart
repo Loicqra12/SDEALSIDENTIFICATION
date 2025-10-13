@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../models/recensement_model.dart';
 import '../services/local_storage_service.dart';
+import '../services/api_service.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -14,6 +15,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<RecensementModel> _recensements = [];
   bool _isLoading = true;
   String _selectedFilter = 'all';
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -21,36 +23,97 @@ class _HistoryScreenState extends State<HistoryScreen> {
     _loadRecensements();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadRecensements() async {
     setState(() => _isLoading = true);
 
     try {
-      final allRecensements = await LocalStorageService.getAllRecensements();
+      // 🆕 Charger depuis le backend (MongoDB) au lieu du local
+      final backendData = await ApiService.getRecensementsFromBackend();
+      
+      // Convertir en RecensementModel pour compatibilité UI
+      final recensements = backendData.map((data) {
+        return RecensementModel(
+          id: data['id'] ?? '',
+          type: data['type'] ?? 'prestataire',
+          nom: data['nom'] ?? '',
+          telephone: data['telephone'] ?? '',
+          email: '',
+          adresse: data['localisation'] ?? '',
+          ville: '',
+          quartier: '',
+          groupe: _getGroupeFromType(data['type'] ?? 'prestataire'),
+          categorie: '',
+          service: data['service'] ?? '',
+          latitude: 0,
+          longitude: 0,
+          recenseurId: '',
+          recenseurNom: 'Recenseur',
+          dateRecensement: DateTime.tryParse(data['date'] ?? '') ?? DateTime.now(),
+          synced: data['status'] == 'active' || data['status'] == 'rejected',
+          backendId: data['id'],
+          status: data['status'] ?? 'pending',
+          localisation: data['localisation'] ?? '',
+        );
+      }).toList();
+
       setState(() {
-        _recensements = allRecensements;
+        _recensements = recensements;
         _isLoading = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur lors du chargement: $e')),
-        );
+      print('❌ Erreur chargement depuis backend: $e');
+      
+      // Fallback: charger depuis le local si erreur
+      try {
+        final localRecensements = await LocalStorageService.getAllRecensements();
+        setState(() {
+          _recensements = localRecensements;
+          _isLoading = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚠️ Mode hors ligne - Données locales affichées'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } catch (localError) {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erreur: $localError')),
+          );
+        }
       }
     }
   }
 
   List<RecensementModel> get _filteredRecensements {
-    switch (_selectedFilter) {
-      case 'synced':
-        return _recensements.where((r) => r.status == 'synced').toList();
-      case 'pending':
-        return _recensements.where((r) => r.status == 'pending').toList();
-      case 'draft':
-        return _recensements.where((r) => r.status == 'draft').toList();
-      default:
-        return _recensements;
+    var results = _recensements;
+
+    // Filtre par statut
+    if (_selectedFilter != 'all') {
+      results = results.where((r) => r.status == _selectedFilter).toList();
     }
+
+    // Recherche par nom ou téléphone
+    if (_searchController.text.isNotEmpty) {
+      final search = _searchController.text.toLowerCase();
+      results = results.where((r) =>
+        r.nom.toLowerCase().contains(search) ||
+        r.telephone.contains(search)
+      ).toList();
+    }
+
+    return results;
   }
 
   String _getStatusText(String status) {
@@ -125,9 +188,33 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ),
       body: Column(
         children: [
+          // Barre de recherche
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                labelText: 'Rechercher par nom ou téléphone',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          setState(() {
+                            _searchController.clear();
+                          });
+                        },
+                      )
+                    : null,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() {}),
+            ),
+          ),
+
           // Filtres
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(
@@ -161,12 +248,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
                 const SizedBox(width: 16),
                 Text(
-                  '${_filteredRecensements.length} recensements',
+                  '${_filteredRecensements.length} résultats',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 8),
 
           // Liste des recensements
           Expanded(
@@ -321,13 +409,33 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ElevatedButton(
                   onPressed: () {
                     context.pop();
-                    // TODO: Naviguer vers l'édition du recensement
+                    // Navigation vers l'édition
+                    context.push(
+                      '/recensement-form?type=${recensement.type}&id=${recensement.id}',
+                    );
                   },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1CBF3F),
+                    foregroundColor: Colors.white,
+                  ),
                   child: const Text('Modifier'),
                 ),
             ],
           ),
     );
+  }
+
+  String _getGroupeFromType(String type) {
+    switch (type) {
+      case 'prestataire':
+        return 'Métiers';
+      case 'freelance':
+        return 'Freelance';
+      case 'vendeur':
+        return 'E-marché';
+      default:
+        return 'Métiers';
+    }
   }
 
   Widget _buildDetailRow(String label, String value) {
