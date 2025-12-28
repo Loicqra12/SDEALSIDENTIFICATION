@@ -13,6 +13,14 @@ import '../services/sync_service.dart';
 import '../services/api_service.dart';
 import '../blocs/classification_bloc.dart';
 
+// 🆕 Nouveaux imports pour UX/UI amélioré
+import '../utils/toast_helper.dart';
+import '../utils/validators.dart';
+import '../services/image_service.dart';
+import '../widgets/upload_progress_overlay.dart';
+import '../widgets/success_animation.dart';
+import '../widgets/image_preview_dialog.dart';
+
 class RecensementFormScreen extends StatefulWidget {
   final String type;
 
@@ -61,6 +69,10 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
       TextEditingController();
   List<String> _selectedProductCategories = [];
   List<String> _selectedProductTypes = [];
+
+  // 🆕 État pour upload progress
+  bool _isUploading = false;
+  double _uploadProgress = 0.0;
 
   // Classification (chargées depuis le backend)
   List<CategorieModel> _categories = [];
@@ -246,9 +258,28 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
     );
 
     if (image != null) {
+      File imageFile = File(image.path);
+
+      // 🆕 Preview de la photo
+      await ImagePreviewDialog.show(
+        context,
+        imageFile: imageFile,
+        title: 'Photo du profil',
+        onRetake: _takePhoto,
+        onDelete: () {
+          setState(() => _photoFile = null);
+        },
+      );
+
+      // 🆕 Compression automatique
+      ToastHelper.showLoading('Compression de l\'image...');
+      final compressed = await ImageService.compressIfNeeded(imageFile);
+      
       setState(() {
-        _photoFile = File(image.path);
+        _photoFile = compressed;
       });
+      
+      ToastHelper.showSuccess('Photo prête pour l\'envoi!');
     }
   }
 
@@ -309,9 +340,21 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
       '📋 Données: type=${widget.type}, categorie=$_selectedCategorie, service=$_selectedService',
     );
 
-    if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
+    if (!_formKey.currentState!.validate()) {
+      // 🆕 Toast pour erreur de validation
+      ToastHelper.showError('Veuillez corriger les erreurs du formulaire');
+      return;
+    }
 
+    _formKey.currentState!.save();
+
+    // 🆕 Afficher overlay de progression
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0.0;
+    });
+
+    try {
       // Préparer les données pour l'API v2 simplifiée
       final data = {
         'type': widget.type,
@@ -339,6 +382,7 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
       };
 
       print('📤 Envoi des données vers API v2...');
+      setState(() => _uploadProgress = 0.3);
 
       // Appeler l'API simplifiée
       final result = await ApiService.submitRecensementSimple(
@@ -347,8 +391,11 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
         recenseurNom: _currentUserName ?? 'Recenseur',
       );
 
+      setState(() => _uploadProgress = 0.9);
+
       if (result['success'] == true) {
         print('✅ Recensement soumis avec succès');
+        setState(() => _uploadProgress = 1.0);
 
         // Calculer les points
         final points = PointsService.calculateRecensementPoints(
@@ -366,12 +413,40 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
           'Recensement ${_getTypeTitle()}',
         );
 
-        // Afficher succès
+        setState(() => _isUploading = false);
+
+        // 🆕 Animation de succès
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => Dialog(
+            backgroundColor: Colors.transparent,
+            child: SizedBox(
+              height: 200,
+              child: SuccessAnimation(
+                onComplete: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        );
+
+        // 🆕 Toast de succès
+        ToastHelper.showSuccess('✅ Recensement enregistré avec succès!');
+
+        // Afficher dialog info
         _showSuccessDialog(points);
       } else {
-        print('❌ Erreur soumission: ${result['error']}');
+        print('❌ Erreur soumission: ${result["error"]}');
+        setState(() => _isUploading = false);
+        // 🆕 Toast d'erreur
+        ToastHelper.showError('❌ Erreur: ${result["error"]}');
         _showErrorDialog(result['error']?.toString() ?? 'Erreur inconnue');
       }
+    } catch (e) {
+      setState(() => _isUploading = false);
+      // 🆕 Toast d'erreur
+      ToastHelper.showError('❌ Erreur: ${e.toString()}');
+      _showErrorDialog(e.toString());
     }
   }
 
@@ -571,76 +646,88 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
           _services = state.services;
         }
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text('Recensement ${_getTypeTitle()}'),
-            backgroundColor: const Color(0xFF1CBF3F),
-            foregroundColor: Colors.white,
-            elevation: 0,
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => context.pop(),
-            ),
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(44),
-                bottomRight: Radius.circular(44),
+        return Stack(
+          children: [
+            Scaffold(
+              appBar: AppBar(
+                title: Text('Recensement ${_getTypeTitle()}'),
+                backgroundColor: const Color(0xFF1CBF3F),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () => context.pop(),
+                ),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(44),
+                    bottomRight: Radius.circular(44),
+                  ),
+                ),
+              ),
+              body: Form(
+                key: _formKey,
+                child: Stepper(
+                  type: StepperType.vertical,
+                  currentStep: _currentStep,
+                  steps: _buildSteps(state),
+                  onStepContinue: _nextStep,
+                  onStepCancel: _previousStep,
+                  controlsBuilder: (context, details) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 20.0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: details.onStepContinue,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1CBF3F),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              child: Text(
+                                _currentStep == (widget.type == 'vendeur' ? 6 : 4)
+                                    ? 'SOUMETTRE'
+                                    : 'SUIVANT',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (_currentStep > 0) ...[
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: details.onStepCancel,
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  side: const BorderSide(color: Color(0xFF1CBF3F)),
+                                ),
+                                child: const Text(
+                                  'RETOUR',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-          body: Form(
-            key: _formKey,
-            child: Stepper(
-              type: StepperType.vertical,
-              currentStep: _currentStep,
-              steps: _buildSteps(state),
-              onStepContinue: _nextStep,
-              onStepCancel: _previousStep,
-              controlsBuilder: (context, details) {
-                return Padding(
-                  padding: const EdgeInsets.only(top: 20.0),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: details.onStepContinue,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1CBF3F),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          child: Text(
-                            _currentStep == (widget.type == 'vendeur' ? 6 : 4)
-                                ? 'SOUMETTRE'
-                                : 'SUIVANT',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_currentStep > 0) ...[
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: details.onStepCancel,
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              side: const BorderSide(color: Color(0xFF1CBF3F)),
-                            ),
-                            child: const Text(
-                              'RETOUR',
-                              style: TextStyle(fontSize: 16),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
+            // 🆕 Overlay de progression
+            if (_isUploading)
+              UploadProgressOverlay(
+                progress: _uploadProgress,
+                message: _uploadProgress < 0.5
+                    ? 'Préparation des données...'
+                    : 'Envoi au serveur...',
+              ),
+          ],
         );
       },
     );
@@ -656,7 +743,7 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
         ),
         const SizedBox(height: 20),
 
-        // Nom
+        // Nom - 🆕 Avec validation améliorée
         TextFormField(
           controller: _nomController,
           decoration: const InputDecoration(
@@ -664,51 +751,47 @@ class _RecensementFormScreenState extends State<RecensementFormScreen> {
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.person),
           ),
-          validator: (value) {
-            if (value == null || value.isEmpty) {
-              return 'Veuillez entrer le nom';
-            }
-            return null;
-          },
+          validator: Validators.validateName,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
         ),
         const SizedBox(height: 16),
 
-        // Téléphone
+        // Téléphone - 🆕 Avec validation ivoirienne
         TextFormField(
           controller: _telephoneController,
           decoration: const InputDecoration(
             labelText: 'Téléphone *',
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.phone),
-            hintText: 'Ex: +225 07 XX XX XX XX',
+            hintText: 'Ex: +225 07 07 12 34 56',
           ),
           keyboardType: TextInputType.phone,
-          validator: (value) {
-            if (value == null || value.isEmpty) {
-              return 'Veuillez entrer le numéro de téléphone';
+          validator: Validators.validateIvorianPhone,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          onChanged: (value) {
+            // Formater automatiquement pendant la saisie
+            final formatted = Validators.formatIvorianPhone(value);
+            if (formatted != value) {
+              _telephoneController.text = formatted;
+              _telephoneController.selection = TextSelection.fromPosition(
+                TextPosition(offset: formatted.length),
+              );
             }
-            return null;
           },
         ),
         const SizedBox(height: 16),
 
-        // Email
+        // Email - 🆕 Avec validation regex
         TextFormField(
           controller: _emailController,
           decoration: const InputDecoration(
-            labelText: 'Email',
+            labelText: 'Email (optionnel)',
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.email),
           ),
           keyboardType: TextInputType.emailAddress,
-          validator: (value) {
-            if (value != null && value.isNotEmpty) {
-              if (!value.contains('@') || !value.contains('.')) {
-                return 'Veuillez entrer un email valide';
-              }
-            }
-            return null;
-          },
+          validator: Validators.validateEmail,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
         ),
         const SizedBox(height: 16),
 

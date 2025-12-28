@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/classification_model.dart';
+import 'cache_service.dart';
 
 /// 🆕 VERSION SIMPLIFIÉE - API Service pour SDEALSIDENTIFICATION
 /// Option C: Utilise les endpoints existants avec champs source, status, recenseur
@@ -27,6 +28,24 @@ class ApiService {
     try {
       print('🔄 Chargement catégories pour: $nomGroupe');
 
+      // 🆕 Vérifier le cache d'abord
+      final cacheKey = CacheService.getCategoriesCacheKey(nomGroupe);
+      final cachedData = await CacheService.getCache(cacheKey);
+      
+      if (cachedData != null && cachedData is List) {
+        print('📦 Catégories chargées depuis le cache');
+        List<CategorieModel> categories = [];
+        for (var json in cachedData) {
+          try {
+            categories.add(CategorieModel.fromJson(json));
+          } catch (e) {
+            print('⚠️ Erreur parsing catégorie cachée: $e');
+          }
+        }
+        return categories;
+      }
+
+      // Appel API si pas de cache
       final response = await http
           .get(Uri.parse('$baseUrl/categorie'), headers: _defaultHeaders)
           .timeout(Duration(milliseconds: timeout));
@@ -34,6 +53,7 @@ class ApiService {
       if (response.statusCode == 200) {
         List<dynamic> allCategoriesJson = json.decode(response.body);
         List<CategorieModel> categories = [];
+        List<dynamic> categoriesToCache = [];
 
         for (var json in allCategoriesJson) {
           try {
@@ -45,10 +65,20 @@ class ApiService {
             if (groupeNom != null &&
                 groupeNom.toLowerCase() == nomGroupe.toLowerCase()) {
               categories.add(CategorieModel.fromJson(json));
+              categoriesToCache.add(json);
             }
           } catch (e) {
             print('⚠️ Erreur parsing catégorie: $e');
           }
+        }
+
+        // 🆕 Sauvegarder en cache
+        if (categoriesToCache.isNotEmpty) {
+          await CacheService.saveCache(
+            cacheKey,
+            categoriesToCache,
+            duration: const Duration(hours: 24),
+          );
         }
 
         print('✅ ${categories.length} catégories chargées');
@@ -69,6 +99,24 @@ class ApiService {
     try {
       print('🔄 Chargement services pour catégorie: $categorieId');
 
+      // 🆕 Vérifier le cache d'abord
+      final cacheKey = CacheService.getServicesCacheKey(categorieId);
+      final cachedData = await CacheService.getCache(cacheKey);
+      
+      if (cachedData != null && cachedData is List) {
+        print('📦 Services chargés depuis le cache');
+        List<ServiceModel> services = [];
+        for (var json in cachedData) {
+          try {
+            services.add(ServiceModel.fromJson(json));
+          } catch (e) {
+            print('⚠️ Erreur parsing service caché: $e');
+          }
+        }
+        return services;
+      }
+
+      // Appel API si pas de cache
       final response = await http
           .get(Uri.parse('$baseUrl/service'), headers: _defaultHeaders)
           .timeout(Duration(milliseconds: timeout));
@@ -76,6 +124,7 @@ class ApiService {
       if (response.statusCode == 200) {
         List<dynamic> allServicesJson = json.decode(response.body);
         List<ServiceModel> services = [];
+        List<dynamic> servicesToCache = [];
 
         for (var json in allServicesJson) {
           try {
@@ -88,10 +137,20 @@ class ApiService {
 
             if (serviceCategorieId == categorieId) {
               services.add(ServiceModel.fromJson(json));
+              servicesToCache.add(json);
             }
           } catch (e) {
             print('⚠️ Erreur parsing service: $e');
           }
+        }
+
+        // 🆕 Sauvegarder en cache
+        if (servicesToCache.isNotEmpty) {
+          await CacheService.saveCache(
+            cacheKey,
+            servicesToCache,
+            duration: const Duration(hours: 24),
+          );
         }
 
         print('✅ ${services.length} services chargés');
